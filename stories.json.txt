@@ -1,6 +1,0 @@
-﻿[
-  {
-    "title": "Küçük Yıldızın Parlayan Yolu",
-    "script": "Gökyüzünde parlamaktan korkan minik bir yıldız varmış. Diğerleri kadar büyük olmadığını düşünür, bulutların arkasına saklanırmış. Bir gece yeryüzündeki kayıp bir çocuğun yolunu bulması için sadece onun ışığına ihtiyaç duyulmuş. Minik yıldız var gücüyle parlamış ve çocuğa yardım etmiş. O gece anlamış ki, en küçük ışık bile karanlığı yenebilir."
-  }
-]
