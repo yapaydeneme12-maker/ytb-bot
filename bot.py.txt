@@ -1,0 +1,158 @@
+﻿import os
+import json
+import time
+import schedule
+import requests
+from gtts import gTTS
+from moviepy.editor import AudioFileClip, ColorClip
+from playwright.sync_api import sync_playwright
+
+# Ortam Değişkenleri
+COOKIES_DATA = os.environ.get("YOUTUBE_COOKIES")
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
+
+def havuzdan_masal_al():
+    json_dosya = "stories.json"
+    if not os.path.exists(json_dosya):
+        # Dosya yoksa ilk havuzu oluştur
+        baslangic_havuzu = [{
+            "title": "Ormandaki Dostluk",
+            "script": "Yemyeşil bir ormanda yaşayan iki sevimli sincap, en büyük fındığı bulmak için yarışa girmişler. Ancak yarışırken yolda yardıma muhtaç küçük bir kuşu fark etmişler. Yarışı bırakıp kuşun yardımına koşmuşlar. O gün dostluğun her yarıştan daha değerli olduğunu anlamışlar."
+        }]
+        with open(json_dosya, "w", encoding="utf-8") as f:
+            json.dump(baslangic_havuzu, f, ensure_ascii=False, indent=4)
+
+    with open(json_dosya, "r", encoding="utf-8") as f:
+        stories = json.load(f)
+
+    # Eğer havuz azaldıysa ve Groq anahtarı varsa arka planda otomatik yeni masal üret
+    if len(stories) < 2 and GROQ_API_KEY:
+        print("🔄 Masal havuzu azaldı, arka planda Groq ile yeni masal üretiliyor...")
+        try:
+            url = "https://api.groq.com/openai/v1/chat/completions"
+            headers = {'Content-Type': 'application/json', 'Authorization': f'Bearer {GROQ_API_KEY}'}
+            data = {
+                "model": "llama-3.3-70b-versatile",
+                "messages": [{
+                    "role": "user", 
+                    "content": "3-6 yaş çocuklar için Türkçe eğitici bir masal yaz. Yanıtını kesinlikle şu JSON formatında ver, başka hiçbir açıklama ekleme: {\"title\": \"Masal Başlığı\", \"script\": \"Masal metni buraya gelecek...\"}"
+                }],
+                "temperature": 0.7
+            }
+            res = requests.post(url, json=data, headers=headers, timeout=30)
+            cevap_metni = res.json()['choices'][0]['message']['content']
+            
+            # JSON formatını temizleyip parse etmeye çalışalım
+            if "json" in cevap_metni:
+                cevap_metni = cevap_metni.split("json")[1].split("")[0].strip()
+            elif "" in cevap_metni:
+                cevap_metni = cevap_metni.split("")[1].split("")[0].strip()
+                
+            yeni_masal = json.loads(cevap_metni)
+            if "title" in yeni_masal and "script" in yeni_masal:
+                stories.append(yeni_masal)
+                print(f"✨ Yeni masal üretildi ve havuza eklendi: {yeni_masal['title']}")
+        except Exception as e:
+            print(f"⚠️ Otomatik masal üretilemedi: {e}")
+
+    # Güncel havuzu tekrar oku
+    with open(json_dosya, "r", encoding="utf-8") as f:
+        stories = json.load(f)
+
+    if not stories:
+        # Acil durum yedek masalı
+        return "Eğitici Çocuk Masalı", "Bir varmış bir yokmuş, evvel zaman içinde güzel bir masal anlatılmış."
+
+    current_story = stories.pop(0)
+    baslik = current_story["title"]
+    script = current_story["script"]
+
+    # Kullanılan masal listeden çıkarıldıktan sonra kalanı kaydet
+    with open(json_dosya, "w", encoding="utf-8") as f:
+        json.dump(stories, f, ensure_ascii=False, indent=4)
+
+    return baslik, script
+
+def gorevi_calistir():
+    print("\n🚀 Otonom Bot Görevi Başlatıldı...")
+    try:
+        baslik, script = havuzdan_masal_al()
+        print(f"📖 Seçilen Masal: {baslik}")
+
+        # 1. Ses ve Video Üretimi
+        print("🗣️ Ses dosyası oluşturuluyor...")
+        tts = gTTS(text=script, lang='tr', slow=False)
+        tts.save("ses.mp3")
+
+        print("🎬 Video kurgulanıyor...")
+        audio = AudioFileClip("ses.mp3")
+        duration = audio.duration
+        background = ColorClip(size=(1280, 720), color=(255, 182, 193), duration=duration)
+        video = background.set_audio(audio)
+        output_file = "final_video.mp4"
+        video.write_videofile(output_file, fps=24, codec="libx264", audio_codec="aac")
+        audio.close()
+        video.close()
+
+        # 2. YouTube Yükleme
+        if not COOKIES_DATA:
+            print("⚠️ UYARI: YOUTUBE_COOKIES bulunamadı, yükleme atlandı.")
+            return
+
+        print("🚀 YouTube Studio'ya yükleniyor...")
+        with open("cookies.txt", "w", encoding="utf-8") as f:
+            f.write(COOKIES_DATA)
+
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            context = browser.new_context(viewport={"width": 1280, "height": 800})
+            
+            cookies = []
+            with open("cookies.txt", "r", encoding="utf-8") as cf:
+                for line in cf:
+                    if line.startswith("#") or not line.strip():
+                        continue
+                    parts = line.strip().split("\t")
+                    if len(parts) >= 7:
+                        domain, flag, path, secure, expiration, name, value = parts[:7]
+                        cookies.append({
+                            "name": name, "value": value, "domain": domain, "path": path,
+                            "secure": secure.lower() == "true",
+                            "expires": int(float(expiration)) if expiration.replace('.', '', 1).isdigit() else -1
+                        })
+            context.add_cookies(cookies)
+            
+            page = context.new_page()
+            page.goto("https://studio.youtube.com", timeout=60000)
+            page.wait_for_selector("#create-icon", timeout=60000)
+            page.click("#create-icon")
+            page.click("#text-item-0")
+            
+            page.locator("input[type='file']").set_input_files(output_file)
+            page.wait_for_selector("#textbox", timeout=60000)
+            page.locator("#textbox").first.fill(baslik)
+            
+            page.wait_for_selector("tp-yt-paper-radio-button[name='RADIO_STREAM_NOT_MADE_FOR_KIDS_MANDATORY']", timeout=30000)
+            page.locator("tp-yt-paper-radio-button[name='RADIO_MADE_FOR_KIDS']").click()
+            
+            for _ in range(3):
+                page.locator("#next-button").click()
+                time.sleep(3)
+                
+            page.wait_for_selector("#public-radio-button", timeout=30000)
+            page.locator("#public-radio-button").click()
+            page.locator("#done-button").click()
+            time.sleep(10)
+            browser.close()
+            print("🎉 Video başarıyla YouTube'a yüklendi!")
+
+    except Exception as e:
+        print(f"❌ Görev sırasında hata oluştu: {e}")
+
+# Her gün saat 13:30'da çalışacak şekilde ayarla
+schedule.every().day.at("13:30").do(gorevi_calistir)
+
+print("🤖 Otonom Bulut Botu Aktif! Zaman bekleniyor...")
+while True:
+    schedule.run_pending()
+    time.sleep(60)
