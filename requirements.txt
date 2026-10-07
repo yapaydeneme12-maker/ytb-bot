@@ -1,5 +1,4 @@
 gTTS==2.5.3
 moviepy==1.0.3
-playwright==1.44.0
 schedule==1.2.1
 requests==2.31.0
